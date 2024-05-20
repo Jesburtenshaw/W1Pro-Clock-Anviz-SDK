@@ -1,0 +1,6 @@
+Date:2020_06_04    Ver : 0.0.0.42     Publish:Dai
+SDK£º
+1. Support the Facepass 7 IRT device
+2. Download the record with detect body temperature
+3. Upload the  record with detect body temperature
+4. Search the body temperature in the records functions
