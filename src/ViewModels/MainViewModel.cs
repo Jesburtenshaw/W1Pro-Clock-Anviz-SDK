@@ -1,33 +1,34 @@
-﻿using ClockTransactionsTransmiter.Helper;
+﻿using ClockTransactionsTransmiter.Devices;
+using ClockTransactionsTransmiter.Helper;
 using CsvHelper;
-using CsvHelper.Configuration;
-using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Threading;
-using System.Xml.Linq;
 
 namespace ClockTransactionsTransmiter.ViewModels
 {
     public class MainViewModel : BaseViewModel
     {
-        public IntPtr anviz_handle;
-        public CancellationTokenSource cts_get_results;
+        private bool set = false;
+        private bool exit = false;
+        public IntPtr anviz_handle = IntPtr.Zero;
+        public CancellationTokenSource cts_get_results = null;
         private const int authenticationLength = 12;
         private const int bufferLength = 32000;
         private string settingsCsvPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Settings.csv");
         private string recordsCsvPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Records.csv");
         private string employeesCsvPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Employees.csv");
+        private List<EmployeeViewModel> employees = new List<EmployeeViewModel>();
+        private List<RecordViewModel> records = new List<RecordViewModel>();
+        private Queue<RecordViewModel> qRecords = new Queue<RecordViewModel>();
+        private Queue<EmployeeViewModel> qEmployees = new Queue<EmployeeViewModel>();
+        private Dictionary<int, int> dictDevTypeFlag = new Dictionary<int, int>();// 0x10:DR, 0x400:msg content 200 and unicode
 
         private string status;
         public string Status
@@ -127,6 +128,20 @@ namespace ClockTransactionsTransmiter.ViewModels
             }
         }
 
+        private bool showMain;
+        public bool ShowMain
+        {
+            get
+            {
+                return showMain;
+            }
+            set
+            {
+                showMain = value;
+                OnPropertyChanged(nameof(ShowMain));
+            }
+        }
+
         private SettingsViewModel editingSettings;
         public SettingsViewModel EditingSettings
         {
@@ -172,16 +187,19 @@ namespace ClockTransactionsTransmiter.ViewModels
         public RelayCommand ScanCommand { get; set; }
         public RelayCommand SwitchUICommand { get; set; }
         public RelayCommand SaveSettingsCommand { get; set; }
+        
+        public IotHubPublisher IothubPublisher { get; set; }
 
         public MainViewModel()
         {
             ScanCommand = new RelayCommand(Scan);
             SwitchUICommand = new RelayCommand(SwitchUI);
             SaveSettingsCommand = new RelayCommand(SaveSettings);
-            ShowSettings = true;
+            ShowMain = true;
             EditingSettings = new SettingsViewModel();
             CurSettings = new SettingsViewModel();
             Devices = new ObservableCollection<DeviceViewModel>();
+            IothubPublisher = new IotHubPublisher();
         }
 
         private void SaveSettings(object sender)
@@ -191,7 +209,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                 Status = "Please type a valid Service Port.";
                 return;
             }
-            if (EditingSettings.MinIntervalToGetReresult <= 0u)
+            if (EditingSettings.MinIntervalToGetResults <= 0u)
             {
                 Status = "Please type a valid Minutes Interval to Get Records.";
                 return;
@@ -209,39 +227,61 @@ namespace ClockTransactionsTransmiter.ViewModels
 
             Ready = false;
             int ret = 1;
-            if (!string.IsNullOrEmpty(EditingSettings.AuthenticationName) && !string.IsNullOrEmpty(EditingSettings.AuthenticationPassword))
+            if (EditingSettings.AuthenticationName != CurSettings.AuthenticationName ||
+                EditingSettings.AuthenticationPassword != CurSettings.AuthenticationPassword)
             {
-                AnvizNew.CCHEX_CONNECTION_AUTHENTICATION_STRU param;
-                byte[] bytes = BytesStringHelper.Encoding.GetBytes(EditingSettings.AuthenticationName);
-                param.username = new byte[authenticationLength];
-                Array.Copy(bytes, param.username, bytes.Length > authenticationLength ? authenticationLength : bytes.Length);
-                param.password = new byte[authenticationLength];
-                bytes = BytesStringHelper.Encoding.GetBytes(EditingSettings.AuthenticationPassword);
-                Array.Copy(bytes, param.password, bytes.Length > authenticationLength ? authenticationLength : bytes.Length);
+                if (!string.IsNullOrEmpty(EditingSettings.AuthenticationName) && !string.IsNullOrEmpty(EditingSettings.AuthenticationPassword))
+                {
+                    AnvizNew.CCHEX_CONNECTION_AUTHENTICATION_STRU param;
+                    byte[] bytes = BytesStringHelper.Encoding.GetBytes(EditingSettings.AuthenticationName);
+                    param.username = new byte[authenticationLength];
+                    Array.Copy(bytes, param.username, bytes.Length > authenticationLength ? authenticationLength : bytes.Length);
+                    param.password = new byte[authenticationLength];
+                    bytes = BytesStringHelper.Encoding.GetBytes(EditingSettings.AuthenticationPassword);
+                    Array.Copy(bytes, param.password, bytes.Length > authenticationLength ? authenticationLength : bytes.Length);
 
-                IntPtr ptrParam = Marshal.AllocHGlobal(Marshal.SizeOf(param));
-                Marshal.StructureToPtr(param, ptrParam, false);
+                    IntPtr ptrParam = Marshal.AllocHGlobal(Marshal.SizeOf(param));
+                    Marshal.StructureToPtr(param, ptrParam, false);
 
-                ret = AnvizNew.CChex_Set_Connect_Authentication(anviz_handle, ptrParam);
-                Marshal.FreeHGlobal(ptrParam);
-            }
-            else
-            {
-                ret = AnvizNew.CChex_Set_Connect_Authentication(anviz_handle, IntPtr.Zero);
-            }
-            if (ret != 1)
-            {
-                Ready = true;
-                Status = $"Couldn't authenticate, error code: {ret}.";
-                return;
+                    ret = AnvizNew.CChex_Set_Connect_Authentication(anviz_handle, ptrParam);
+                    Marshal.FreeHGlobal(ptrParam);
+                }
+                else
+                {
+                    ret = AnvizNew.CChex_Set_Connect_Authentication(anviz_handle, IntPtr.Zero);
+                }
+                if (ret != 1)
+                {
+                    Ready = true;
+                    Status = $"Couldn't authenticate, error code: {ret}.";
+                    return;
+                }
             }
 
             CurSettings.ServicePort = EditingSettings.ServicePort;
             CurSettings.AuthenticationName = EditingSettings.AuthenticationName;
             CurSettings.AuthenticationPassword = EditingSettings.AuthenticationPassword;
-            CurSettings.MinIntervalToGetReresult = EditingSettings.MinIntervalToGetReresult;
+            CurSettings.MinIntervalToGetResults = EditingSettings.MinIntervalToGetResults;
             CurSettings.MinIntervalToUploadRecords = EditingSettings.MinIntervalToUploadRecords;
             CurSettings.UploadRecordsApiUrl = EditingSettings.UploadRecordsApiUrl;
+
+            var curBootargsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, Path.GetFileName(EditingSettings.BootargsFilePath));
+            if (EditingSettings.BootargsFilePath != CurSettings.BootargsFilePath &&
+                EditingSettings.BootargsFilePath != curBootargsFilePath &&
+                EditingSettings.BootargsFilePath.Equals("*.bootargs"))
+            {
+                EnumerationOptions enumerationOptions = new EnumerationOptions();
+                enumerationOptions.MatchCasing = MatchCasing.CaseInsensitive;
+                enumerationOptions.RecurseSubdirectories = false;
+                var files = Directory.GetFiles(AppDomain.CurrentDomain.BaseDirectory, "*.bootargs", enumerationOptions);
+                foreach (var file in files)
+                {
+                    File.Move(file, file.Replace(".bootargs", ".bootargs.bak"), true);
+                }
+
+                CurSettings.BootargsFilePath = EditingSettings.BootargsFilePath;
+                File.Copy(CurSettings.BootargsFilePath, curBootargsFilePath, true);
+            }
 
             Task.Run(() =>
             {
@@ -253,13 +293,19 @@ namespace ClockTransactionsTransmiter.ViewModels
                     }
                 }
 
-                //Stop(false);
-                //await Start();
-                Application.Current.Dispatcher.Invoke(() =>
+                if (!set)
                 {
-                    Ready = true;
-                    Status = "Settings saved. Rescanning required.";
-                });
+                    set = !set;
+                    DoScan(sender);
+                }
+                else
+                {
+                    Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        Ready = true;
+                        Status = "Settings saved. Searching required.";
+                    });
+                }
             });
         }
 
@@ -273,6 +319,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                 ShowDevices = false;
                 ShowEmployees = false;
                 ShowRecords = false;
+                ShowMain = false;
             }
             else if (btnCode == "Devices")
             {
@@ -285,6 +332,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                 ShowDevices = true;
                 ShowEmployees = false;
                 ShowRecords = false;
+                ShowMain = false;
             }
             else if (btnCode == "Employees")
             {
@@ -292,6 +340,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                 ShowDevices = false;
                 ShowEmployees = true;
                 ShowRecords = false;
+                ShowMain = false;
             }
             else if (btnCode == "Records")
             {
@@ -299,10 +348,19 @@ namespace ClockTransactionsTransmiter.ViewModels
                 ShowDevices = false;
                 ShowEmployees = false;
                 ShowRecords = true;
+                ShowMain = false;
+            }
+            else
+            {
+                ShowSettings = false;
+                ShowDevices = false;
+                ShowEmployees = false;
+                ShowRecords = false;
+                ShowMain = true;
             }
         }
 
-        private void Scan(object sender)
+        private void DoScan(object sender)
         {
             Task.Run(async () =>
             {
@@ -314,27 +372,41 @@ namespace ClockTransactionsTransmiter.ViewModels
                 {
                     await Start();
                 }
-                foreach (var device in Devices)
-                {
-                    if (device.Conencted)
-                    {
-                        AnvizNew.CCHex_ClientDisconnect(anviz_handle, device.Index);
-                    }
-                }
 
-                int ret = AnvizNew.CCHex_Udp_Search_Dev(anviz_handle);
-                if (ret != 1)
-                {
+                //int ret = AnvizNew.CCHex_Udp_Search_Dev(anviz_handle);
+                //if (ret != 1)
+                //{
                     await Broadcast();
-                }
+                //}
 
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     Ready = true;
-                    Status = "Scanned, please wait for the devices respond.";
+                    Status = "Searched, please wait for the devices to respond.";
                     //SwitchUI("Devices");
                 });
             });
+        }
+        private void Scan(object sender)
+        {
+            if (!set)
+            {
+                Status = "Please modify and save settings first.";
+                SwitchUI("Settings");
+                return;
+            }
+            var messageBox = new AdonisUI.Controls.MessageBoxModel
+            {
+                Text = "Are you sure to search for all the devices in the same LAN again?",
+                Caption = "Search",
+                Icon = AdonisUI.Controls.MessageBoxImage.Question,
+                Buttons = AdonisUI.Controls.MessageBoxButtons.YesNo()
+            };
+            if (AdonisUI.Controls.MessageBox.Show(messageBox) != AdonisUI.Controls.MessageBoxResult.Yes)
+            {
+                return;
+            }
+            DoScan(sender);
         }
 
         public void ReGenCts()
@@ -342,7 +414,6 @@ namespace ClockTransactionsTransmiter.ViewModels
             cts_get_results?.Cancel();
             cts_get_results = new CancellationTokenSource();
         }
-
         private void ClearCts()
         {
             cts_get_results?.Cancel();
@@ -369,6 +440,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                     var setting = settings.FirstOrDefault();
                     if (null != setting)
                     {
+                        set = true;
                         Application.Current.Dispatcher.Invoke(() =>
                         {
                             EditingSettings.AuthenticationName = setting.AuthenticationName;
@@ -378,6 +450,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                             EditingSettings.MinIntervalToUploadRecords = setting.MinIntervalToUploadRecords;
                             EditingSettings.UploadRecordsApiUrl = setting.UploadRecordsApiUrl;
                             EditingSettings.Ips = setting.Ips;
+                            EditingSettings.BootargsFilePath = setting.BootargsFilePath;
 
                             CurSettings.AuthenticationName = setting.AuthenticationName;
                             CurSettings.AuthenticationPassword = setting.AuthenticationPassword;
@@ -405,57 +478,65 @@ namespace ClockTransactionsTransmiter.ViewModels
                 return false;
             }
 
-            //AnvizNew.CChex_Get_Service_Port(anviz_handle);
-
-            int ret = 1;
-            if (!string.IsNullOrEmpty(CurSettings.AuthenticationName) && !string.IsNullOrEmpty(CurSettings.AuthenticationPassword))
+            if (set)
             {
-                AnvizNew.CCHEX_CONNECTION_AUTHENTICATION_STRU param;
-                byte[] bytes = BytesStringHelper.Encoding.GetBytes(CurSettings.AuthenticationName);
-                param.username = new byte[authenticationLength];
-                Array.Copy(bytes, param.username, bytes.Length > authenticationLength ? authenticationLength : bytes.Length);
-                param.password = new byte[authenticationLength];
-                bytes = BytesStringHelper.Encoding.GetBytes(CurSettings.AuthenticationPassword);
-                Array.Copy(bytes, param.password, bytes.Length > authenticationLength ? authenticationLength : bytes.Length);
+                //AnvizNew.CChex_Get_Service_Port(anviz_handle);
 
-                IntPtr ptrParam = Marshal.AllocHGlobal(Marshal.SizeOf(param));
-                Marshal.StructureToPtr(param, ptrParam, false);
+                int ret = 1;
+                if (!string.IsNullOrEmpty(CurSettings.AuthenticationName) && !string.IsNullOrEmpty(CurSettings.AuthenticationPassword))
+                {
+                    AnvizNew.CCHEX_CONNECTION_AUTHENTICATION_STRU param;
+                    byte[] bytes = BytesStringHelper.Encoding.GetBytes(CurSettings.AuthenticationName);
+                    param.username = new byte[authenticationLength];
+                    Array.Copy(bytes, param.username, bytes.Length > authenticationLength ? authenticationLength : bytes.Length);
+                    param.password = new byte[authenticationLength];
+                    bytes = BytesStringHelper.Encoding.GetBytes(CurSettings.AuthenticationPassword);
+                    Array.Copy(bytes, param.password, bytes.Length > authenticationLength ? authenticationLength : bytes.Length);
 
-                ret = AnvizNew.CChex_Set_Connect_Authentication(anviz_handle, ptrParam);
-                Marshal.FreeHGlobal(ptrParam);
-            }
-            else
-            {
-                ret = AnvizNew.CChex_Set_Connect_Authentication(anviz_handle, IntPtr.Zero);
-            }
-            if (ret != 1)
-            {
+                    IntPtr ptrParam = Marshal.AllocHGlobal(Marshal.SizeOf(param));
+                    Marshal.StructureToPtr(param, ptrParam, false);
+
+                    ret = AnvizNew.CChex_Set_Connect_Authentication(anviz_handle, ptrParam);
+                    Marshal.FreeHGlobal(ptrParam);
+                }
+                else
+                {
+                    ret = AnvizNew.CChex_Set_Connect_Authentication(anviz_handle, IntPtr.Zero);
+                }
+                if (ret != 1)
+                {
+                    Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        Ready = true;
+                        Success = false;
+                        Status = $"Couldn't authenticate, error code: {ret}.";
+                    });
+                    return false;
+                }
+
+                ret = AnvizNew.CCHex_Udp_Search_Dev(anviz_handle);
+                if (ret != 1)
+                {
+                    await Broadcast();
+                }
+
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     Ready = true;
-                    Success = false;
-                    Status = $"Couldn't authenticate, error code: {ret}.";
+                    Success = true;
+                    Status = "Initialized successfully, please wait for the devices to respond.";
+                    //SwitchUI("Devices");
                 });
-                return false;
             }
-
-            ret = AnvizNew.CCHex_Udp_Search_Dev(anviz_handle);
-            if (ret != 1)
+            else
             {
-                await Broadcast();
-            }
-
-            Application.Current.Dispatcher.Invoke(() =>
-            {
+                Status = "Please modify and save settings first.";
                 Ready = true;
-                Success = true;
-                Status = "Initialized successfully, please wait for the devices to respond.";
-                //SwitchUI("Devices");
-            });
+                SwitchUI("Settings");
+            }
+
             return true;
         }
-
-        private bool exit = false;
         public void Stop(bool exit = true)
         {
             this.exit = exit;
@@ -478,10 +559,7 @@ namespace ClockTransactionsTransmiter.ViewModels
             AnvizNew.CChex_Stop(anviz_handle);
             anviz_handle = IntPtr.Zero;
         }
-
-        private Queue<RecordViewModel> qRecords = new Queue<RecordViewModel>();
-        private Queue<EmployeeViewModel> qEmployees = new Queue<EmployeeViewModel>();
-        private Dictionary<int, int> DevTypeFlag = new Dictionary<int, int>();// 0x10:DR, 0x400:msg content 200 and unicode
+       
         public async Task GetResults()
         {
             int ret = 1;
@@ -509,6 +587,10 @@ namespace ClockTransactionsTransmiter.ViewModels
                             {
                                 foreach (var objDevice in lstDevice)
                                 {
+                                    if (Devices.FirstOrDefault(item => item.Conencted && item.Index == objDevice.Index) != null)
+                                    {
+                                        continue;
+                                    }
                                     AnvizNew.CCHex_ClientConnect(anviz_handle, BytesStringHelper.Encoding.GetBytes(objDevice.IpAddr), (int)CurSettings.ServicePort);
                                     await Task.Delay(10);
                                 }
@@ -546,29 +628,33 @@ namespace ClockTransactionsTransmiter.ViewModels
                         case (int)AnvizNew.MsgType.CCHEX_RET_DEV_LOGIN_TYPE:
                             AnvizNew.CCHEX_RET_DEV_LOGIN_STRU dev_add;
                             dev_add = (AnvizNew.CCHEX_RET_DEV_LOGIN_STRU)Marshal.PtrToStructure(pBuff, typeof(AnvizNew.CCHEX_RET_DEV_LOGIN_STRU));
-                            if (!DevTypeFlag.ContainsKey(dev_add.DevIdx))
+                            if (!dictDevTypeFlag.ContainsKey(dev_add.DevIdx))
                             {
-                                DevTypeFlag.Add(dev_add.DevIdx, (int)dev_add.DevTypeFlag);
+                                dictDevTypeFlag.Add(dev_add.DevIdx, (int)dev_add.DevTypeFlag);
                             }
                             else
                             {
-                                DevTypeFlag[dev_add.DevIdx] = (int)dev_add.DevTypeFlag;
+                                dictDevTypeFlag[dev_add.DevIdx] = (int)dev_add.DevTypeFlag;
                             }
                             Application.Current.Dispatcher.Invoke(() =>
                             {
-                                Devices.Add(new DeviceViewModel
+                                var deviceAdd = Devices.FirstOrDefault(item => item.Index == dev_add.DevIdx);
+                                if (null == deviceAdd)
                                 {
-                                    Conencted = true,
-                                    MachineId = dev_add.MachineId.ToString(),
-                                    Index = dev_add.DevIdx,
-                                    IpAddr = BytesStringHelper.Encoding.GetString(dev_add.Addr),
-                                    DevSerialNum = "",
-                                    MacAddr = ""
-                                });
-                                AnvizNew.CChex_ListPersonInfo(anviz_handle, dev_add.DevIdx);
-                                AnvizNew.CChex_DownloadAllRecords(anviz_handle, dev_add.DevIdx);
-                                AnvizNew.CChex_DownloadAllNewRecords(anviz_handle, dev_add.DevIdx);
-                                Status = $"Succeeded to connect to {BytesStringHelper.Encoding.GetString(dev_add.Addr)}";
+                                    Devices.Add(new DeviceViewModel
+                                    {
+                                        Conencted = true,
+                                        MachineId = dev_add.MachineId.ToString(),
+                                        Index = dev_add.DevIdx,
+                                        IpAddr = BytesStringHelper.Encoding.GetString(dev_add.Addr),
+                                        DevSerialNum = "",
+                                        MacAddr = ""
+                                    });
+                                    AnvizNew.CChex_ListPersonInfo(anviz_handle, dev_add.DevIdx);
+                                    AnvizNew.CChex_DownloadAllRecords(anviz_handle, dev_add.DevIdx);
+                                    AnvizNew.CChex_DownloadAllNewRecords(anviz_handle, dev_add.DevIdx);
+                                    Status = $"Succeeded to connect to {BytesStringHelper.Encoding.GetString(dev_add.Addr)}";
+                                }
                             }); 
                             var ip_port = BytesStringHelper.Encoding.GetString(dev_add.Addr);
                             var ip = ip_port.Substring(0, ip_port.IndexOf(':'));
@@ -637,7 +723,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                         case (int)AnvizNew.MsgType.CCHEX_RET_GET_NEW_RECORD_INFO_TYPE:
                             RecordViewModel recordViewModel = new RecordViewModel();
                             bool isNew = false;
-                            if ((DevTypeFlag[dev_idx[0]] & 0xFF) == (int)AnvizNew.CustomType.DEV_TYPE_VER_4_NEWID)
+                            if ((dictDevTypeFlag[dev_idx[0]] & 0xFF) == (int)AnvizNew.CustomType.DEV_TYPE_VER_4_NEWID)
                             {
                                 AnvizNew.CCHEX_RET_RECORD_INFO_STRU_VER_4_NEWID record_info;
                                 record_info = (AnvizNew.CCHEX_RET_RECORD_INFO_STRU_VER_4_NEWID)Marshal.PtrToStructure(pBuff, typeof(AnvizNew.CCHEX_RET_RECORD_INFO_STRU_VER_4_NEWID));
@@ -660,17 +746,17 @@ namespace ClockTransactionsTransmiter.ViewModels
                                 isNew = record_info.NewRecordFlag == 1;
                             }
                             qRecords.Enqueue(recordViewModel);
-                            if (isNew)
-                            {
-                                Application.Current.Dispatcher.Invoke(() =>
-                                {
-                                    Status = $"Record Index: {recordViewModel.Index}, downloaded.";
-                                });
-                            }
+                            //if (isNew)
+                            //{
+                            //    Application.Current.Dispatcher.Invoke(() =>
+                            //    {
+                            //        Status = $"Record Index: {recordViewModel.Index}, downloaded.";
+                            //    });
+                            //}
                             break;
                         case (int)AnvizNew.MsgType.CCHEX_RET_LIST_PERSON_INFO_TYPE:
                             EmployeeViewModel employeeViewModel = new EmployeeViewModel();
-                            if ((DevTypeFlag[dev_idx[0]] & 0xFF) == (int)AnvizNew.CustomType.DEV_TYPE_FLAG_CARDNO_BYTE_7)
+                            if ((dictDevTypeFlag[dev_idx[0]] & 0xFF) == (int)AnvizNew.CustomType.DEV_TYPE_FLAG_CARDNO_BYTE_7)
                             {
                                 AnvizNew.CCHEX_RET_DLEMPLOYEE_INFO_STRU_EXT_INF_CARD_LEN_7 person_list;
                                 person_list = (AnvizNew.CCHEX_RET_DLEMPLOYEE_INFO_STRU_EXT_INF_CARD_LEN_7)Marshal.PtrToStructure(pBuff, typeof(AnvizNew.CCHEX_RET_DLEMPLOYEE_INFO_STRU_EXT_INF_CARD_LEN_7));
@@ -691,7 +777,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                                     }
 
                                 }
-                                if ((DevTypeFlag[dev_idx[0]] & 0xFF) == (int)AnvizNew.CustomType.DEV_TYPE_VER_4_NEWID)
+                                if ((dictDevTypeFlag[dev_idx[0]] & 0xFF) == (int)AnvizNew.CustomType.DEV_TYPE_VER_4_NEWID)
                                 {
                                     AnvizNew.CCHEX_RET_DLEMPLOYEE_INFO_STRU_EXT_INF_FOR_VER_4 person_list;
                                     person_list = (AnvizNew.CCHEX_RET_DLEMPLOYEE_INFO_STRU_EXT_INF_FOR_VER_4)Marshal.PtrToStructure(pBuff, typeof(AnvizNew.CCHEX_RET_DLEMPLOYEE_INFO_STRU_EXT_INF_FOR_VER_4));
@@ -700,7 +786,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                                     employeeViewModel.EmployeeId = BytesStringHelper.GetEmployeeId(person_list.EmployeeId);
                                     employeeViewModel.EmployeeName = BytesStringHelper.BytesToUnicodeString(person_list.EmployeeName);
                                 }
-                                else if ((DevTypeFlag[dev_idx[0]] & 0xFF) == (int)AnvizNew.CustomType.ANVIZ_CUSTOM_EMPLOYEE_FOR_W2_ADD_TIME)//this for ANVIZ_CUSTOM_FOR_ComsecITech_W2  SDK
+                                else if ((dictDevTypeFlag[dev_idx[0]] & 0xFF) == (int)AnvizNew.CustomType.ANVIZ_CUSTOM_EMPLOYEE_FOR_W2_ADD_TIME)//this for ANVIZ_CUSTOM_FOR_ComsecITech_W2  SDK
                                 {
                                     AnvizNew.CCHEX_EMPLOYEE_INFO_STRU_EXT_INF_FOR_W2 person_list;
                                     person_list = (AnvizNew.CCHEX_EMPLOYEE_INFO_STRU_EXT_INF_FOR_W2)Marshal.PtrToStructure(pBuff, typeof(AnvizNew.CCHEX_EMPLOYEE_INFO_STRU_EXT_INF_FOR_W2));
@@ -709,7 +795,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                                     employeeViewModel.EmployeeId = BytesStringHelper.GetEmployeeId(person_list.EmployeeId);
                                     employeeViewModel.EmployeeName = BytesStringHelper.BytesToUnicodeString(person_list.EmployeeName);
                                 }
-                                else if ((DevTypeFlag[dev_idx[0]] & 0xFF) == (int)AnvizNew.EmployeeType.DEV_TYPE_FLAG_MSG_ASCII_32)
+                                else if ((dictDevTypeFlag[dev_idx[0]] & 0xFF) == (int)AnvizNew.EmployeeType.DEV_TYPE_FLAG_MSG_ASCII_32)
                                 {                                                                                           ////this for NORMAL  SDK
                                     AnvizNew.CCHEX_RET_PERSON_INFO_STRU person_list;
                                     person_list = (AnvizNew.CCHEX_RET_PERSON_INFO_STRU)Marshal.PtrToStructure(pBuff, typeof(AnvizNew.CCHEX_RET_PERSON_INFO_STRU));
@@ -758,7 +844,6 @@ namespace ClockTransactionsTransmiter.ViewModels
             }
         }
 
-        private List<EmployeeViewModel> employees = new List<EmployeeViewModel>();
         public async Task HandleEmployees()
         {
             if (!File.Exists(employeesCsvPath))
@@ -779,9 +864,15 @@ namespace ClockTransactionsTransmiter.ViewModels
                 while (qEmployees.Count > 0)
                 {
                     var q = qEmployees.Dequeue();
-                    employees.RemoveAll(item => item.EmployeeId == q.EmployeeId);
-                    employees.Add(q);
-                    hasNew = true;
+                    if (!employees.Exists(item => item.EmployeeId == q.EmployeeId))
+                    {
+                        employees.Add(q);
+                        hasNew = true;
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            Status = $"Last employee record: Clock ID: {q.MachineId} Employee ID: {q.EmployeeId} Employee Name: {q.EmployeeName}";
+                        });
+                    }
                 }
 
                 if (hasNew)
@@ -813,7 +904,6 @@ namespace ClockTransactionsTransmiter.ViewModels
             }
         }
 
-        private List<RecordViewModel> records = new List<RecordViewModel>();
         public async Task HandleRecords()
         {
             if (!File.Exists(recordsCsvPath))
@@ -828,21 +918,34 @@ namespace ClockTransactionsTransmiter.ViewModels
                 }
             }
 
+            var newRecords = new List<RecordViewModel>();
             while (!cts_get_results.Token.IsCancellationRequested)
             {
                 var hasNew = false;
                 while (qRecords.Count > 0)
                 {
                     var q = qRecords.Dequeue();
-                    records.RemoveAll(item => item.MachineId == q.MachineId &&
+                    if (!records.Exists(item => item.MachineId == q.MachineId &&
                         item.EmployeeId == q.EmployeeId &&
-                        item.Time == q.Time);
-                    records.Add(q);
-                    hasNew = true;
+                        item.Time == q.Time))
+                    {
+                        newRecords.Add(q);
+                        records.Add(q);
+                        hasNew = true;
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            Status = $"Last transaction record: Clock ID: {q.MachineId} Employee ID: {q.EmployeeId} DateTime: {q.Time}";
+                        });
+                    }
                 }
 
                 if (hasNew)
                 {
+                    foreach (var record in newRecords)
+                    {
+                        await IothubPublisher.SendClockInOut(record.EmployeeId, DateTime.Parse(record.Time));
+                    }
+
                     // Write to a file.
                     using (var writer = new StreamWriter(recordsCsvPath))
                     {
@@ -872,14 +975,26 @@ namespace ClockTransactionsTransmiter.ViewModels
 
         private async Task Broadcast()
         {
+            var ignoringIpList = new List<string>();
+            foreach (var device in Devices)
+            {
+                if (device.Conencted)
+                {
+                    ignoringIpList.Add(device.IpAddr.Substring(0, device.IpAddr.IndexOf(':')));
+                }
+            }
             foreach (var ip in CurSettings.GetIpList())
             {
+                if (ignoringIpList.Contains(ip))
+                {
+                    continue;
+                }
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     Status = $"Ping {ip} ...";
                 });
                 AnvizNew.CCHex_ClientConnect(anviz_handle, BytesStringHelper.Encoding.GetBytes(ip), (int)CurSettings.ServicePort);
-                await Task.Delay(100);
+                await Task.Delay(10);
             }
             string hostName = Dns.GetHostName();
             IPAddress[] ipList = Dns.GetHostAddresses(hostName, AddressFamily.InterNetwork);
@@ -888,6 +1003,10 @@ namespace ClockTransactionsTransmiter.ViewModels
                 string ipAddr = ip.ToString().Substring(0, ip.ToString().LastIndexOf('.') + 1);
                 for (var i = 2; i <= 254; i++)
                 {
+                    if (ignoringIpList.Contains($"{ipAddr}{i}"))
+                    {
+                        continue;
+                    }
                     if (CurSettings.CheckIp($"{ipAddr}{i}"))
                     {
                         continue;
@@ -897,7 +1016,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                         Status = $"Ping {ipAddr}{i} ...";
                     });
                     AnvizNew.CCHex_ClientConnect(anviz_handle, BytesStringHelper.Encoding.GetBytes($"{ipAddr}{i}"), (int)CurSettings.ServicePort);
-                    await Task.Delay(100);
+                    await Task.Delay(10);
                 }
             }
             Application.Current.Dispatcher.Invoke(() =>

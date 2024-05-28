@@ -51,17 +51,17 @@ namespace ClockTransactionsTransmiter.ViewModels
             }
         }
 
-        private int minIntervalToGetReresult = 1;
-        public int MinIntervalToGetReresult
+        private int minIntervalToGetResults = 1;
+        public int MinIntervalToGetResults
         {
             get
             {
-                return minIntervalToGetReresult;
+                return minIntervalToGetResults;
             }
             set
             {
-                minIntervalToGetReresult = value;
-                OnPropertyChanged(nameof(MinIntervalToGetReresult));
+                minIntervalToGetResults = value;
+                OnPropertyChanged(nameof(MinIntervalToGetResults));
             }
         }
 
@@ -90,6 +90,20 @@ namespace ClockTransactionsTransmiter.ViewModels
             {
                 uploadRecordsApiUrl = value;
                 OnPropertyChanged(nameof(UploadRecordsApiUrl));
+            }
+        }
+
+        private string bootargsFilePath = "*.bootargs";
+        public string BootargsFilePath
+        {
+            get
+            {
+                return bootargsFilePath;
+            }
+            set
+            {
+                bootargsFilePath = value;
+                OnPropertyChanged(nameof(BootargsFilePath));
             }
         }
 

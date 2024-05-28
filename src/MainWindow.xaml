@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:ClockTransactionsTransmiter"
         xmlns:converter="clr-namespace:ClockTransactionsTransmiter.Converters"
-        mc:Ignorable="d" WindowStartupLocation="CenterScreen"
+        mc:Ignorable="d" WindowStartupLocation="CenterScreen" ResizeMode="CanMinimize"
         Loaded="Window_Loaded" Closed="Window_Closed"
         Title="Clock Transactions Transmiter" Height="450" Width="600">
     <Window.Resources>
