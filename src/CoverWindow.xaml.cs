@@ -52,6 +52,10 @@ namespace ClockTransactionsTransmiter
             {
                 await mainViewModel.SyncRecords();
             }, mainViewModel.cts_get_results.Token);
+            Task.Run(async () =>
+            {
+                await mainViewModel.HandlePendingRecords();
+            }, mainViewModel.cts_get_results.Token);
 
             Task.Run(async () =>
             {

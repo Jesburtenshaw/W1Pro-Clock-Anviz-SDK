@@ -364,3 +364,4 @@ FodyWeavers.xsd
 
 # output files
 _bin/
+/src/*.user

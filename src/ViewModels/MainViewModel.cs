@@ -23,6 +23,7 @@ namespace ClockTransactionsTransmiter.ViewModels
         private const int bufferLength = 32000;
         private string settingsCsvPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Settings.csv");
         private string recordsCsvPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Records.csv");
+        private string pendingRecordsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PendingRecords");
         private string employeesCsvPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Employees.csv");
         private List<EmployeeViewModel> employees = new List<EmployeeViewModel>();
         private List<RecordViewModel> records = new List<RecordViewModel>();
@@ -906,6 +907,10 @@ namespace ClockTransactionsTransmiter.ViewModels
 
         public async Task HandleRecords()
         {
+            if (!Directory.Exists(pendingRecordsPath))
+            {
+                Directory.CreateDirectory(pendingRecordsPath);
+            }
             if (!File.Exists(recordsCsvPath))
             {
                 File.WriteAllText(recordsCsvPath, null);
@@ -943,7 +948,14 @@ namespace ClockTransactionsTransmiter.ViewModels
                 {
                     foreach (var record in newRecords)
                     {
-                        await IothubPublisher.SendClockInOut(record.EmployeeId, DateTime.Parse(record.Time));
+                        try
+                        {
+                            await IothubPublisher.SendClockInOut(record.EmployeeId, DateTime.Parse(record.Time));
+                        }
+                        catch
+                        {
+                            await File.AppendAllTextAsync(Path.Combine(pendingRecordsPath, $"{DateTime.Now.ToString("yyMMddHHmmssfff")}.json"), Newtonsoft.Json.JsonConvert.SerializeObject(record));
+                        }
                     }
 
                     // Write to a file.
@@ -970,6 +982,36 @@ namespace ClockTransactionsTransmiter.ViewModels
                     AnvizNew.CChex_DownloadAllNewRecords(anviz_handle, device.Index);
                 }
                 await Task.Delay(60000);
+            }
+        }
+        public async Task HandlePendingRecords()
+        {
+            EnumerationOptions enumerationOptions = new EnumerationOptions();
+            enumerationOptions.MatchCasing = MatchCasing.CaseInsensitive;
+            enumerationOptions.RecurseSubdirectories = false;
+            RecordViewModel record = null;
+            while (!cts_get_results.Token.IsCancellationRequested)
+            {
+                var files = Directory.GetFiles(pendingRecordsPath, "*.json", enumerationOptions);
+                if (files.Length == 0)
+                {
+                    await Task.Delay(60000);
+                    continue;
+                }
+                foreach (var file in files)
+                {
+                    try
+                    {
+                        record = Newtonsoft.Json.JsonConvert.DeserializeObject<RecordViewModel>(File.ReadAllText(file));
+                        await IothubPublisher.SendClockInOut(record.EmployeeId, DateTime.Parse(record.Time));
+                        File.Delete(file);
+                    }
+                    catch
+                    {
+                        await Task.Delay(60000);
+                        break;
+                    }
+                }
             }
         }
 
