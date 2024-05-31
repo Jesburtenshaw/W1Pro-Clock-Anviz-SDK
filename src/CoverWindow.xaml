@@ -103,8 +103,8 @@
             <Button HorizontalAlignment="Right" Content="Select" Click="Button_Click" Width="100" Margin="0,0,0,5" IsEnabled="{Binding Ready}" Grid.Row="6" Grid.Column="1"></Button>
             
             <StackPanel Grid.Row="7" Grid.Column="1" Orientation="Horizontal">
-                <Button HorizontalAlignment="Left" Command="{Binding SaveSettingsCommand}" Content="Save" Width="260" Margin="0,0,5,0" IsEnabled="{Binding Ready}"></Button>
-                <Button HorizontalAlignment="Left" Command="{Binding SwitchUICommand}" CommandParameter="Main" Content="Cancel" Width="260" Margin="0,0,5,0" IsEnabled="{Binding Ready}"></Button>
+                <Button HorizontalAlignment="Left" Command="{Binding SaveSettingsCommand}" Content="Save" Width="257" Margin="0,0,5,0" IsEnabled="{Binding Ready}"></Button>
+                <Button HorizontalAlignment="Left" Command="{Binding SwitchUICommand}" CommandParameter="Main" Content="Cancel" Width="256" Margin="0,0,5,0" IsEnabled="{Binding Ready}"></Button>
             </StackPanel>
         </Grid>
 
