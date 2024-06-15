@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.9.34701.34
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ClockTransactionsTransmiter", "ClockTransactionsTransmiter.csproj", "{D8697946-0B68-4DA6-8989-47421086BBED}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ClockTransactionsTransmiter", "ClockTransactionsTransmiter\ClockTransactionsTransmiter.csproj", "{D8697946-0B68-4DA6-8989-47421086BBED}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

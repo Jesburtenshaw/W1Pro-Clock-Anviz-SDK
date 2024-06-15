@@ -8,14 +8,20 @@
     <UseWPF>true</UseWPF>
     <PlatformTarget>x86</PlatformTarget>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <AssemblyVersion>1.0.0</AssemblyVersion>
-    <FileVersion>1.0.0</FileVersion>
+    <AssemblyVersion>2.0.0</AssemblyVersion>
+    <FileVersion>2.0.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="ClockTransactionsTransmiter.sqlite" />
     <None Remove="Resources\args-dark.png" />
+    <None Remove="Resources\back-dark.png" />
     <None Remove="Resources\devices-dark.png" />
+    <None Remove="Resources\employees-dark.png" />
+    <None Remove="Resources\next-dark.png" />
     <None Remove="Resources\password-dark.png" />
+    <None Remove="Resources\prev-dark.png" />
+    <None Remove="Resources\records-dark.png" />
     <None Remove="Resources\search-dark.png" />
     <None Remove="Resources\serviceport-dark.png" />
     <None Remove="Resources\settings-dark.png" />
@@ -24,6 +30,9 @@
 
   <ItemGroup>
     <Content Include="app.ico" />
+    <Content Include="ClockTransactionsTransmiter.sqlite">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
@@ -32,17 +41,18 @@
     <PackageReference Include="CsvHelper" Version="32.0.3" />
     <PackageReference Include="MQTTnet" Version="3.1.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="SqlSugarCore" Version="5.1.4.158" />
   </ItemGroup>
 
   <ItemGroup>
     <Reference Include="Sense.Devices.Protocol">
-      <HintPath>..\refs\Sense.Devices.Protocol.dll</HintPath>
+      <HintPath>..\..\refs\Sense.Devices.Protocol.dll</HintPath>
     </Reference>
     <Reference Include="Sense.Devices.Protocol.Cbor">
-      <HintPath>..\refs\Sense.Devices.Protocol.Cbor.dll</HintPath>
+      <HintPath>..\..\refs\Sense.Devices.Protocol.Cbor.dll</HintPath>
     </Reference>
     <Reference Include="System.Formats.Cbor">
-      <HintPath>..\refs\System.Formats.Cbor.dll</HintPath>
+      <HintPath>..\..\refs\System.Formats.Cbor.dll</HintPath>
     </Reference>
   </ItemGroup>
 
@@ -50,12 +60,17 @@
     <Resource Include="Resources\args-dark.png">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Resource>
+    <Resource Include="Resources\back-dark.png" />
     <Resource Include="Resources\devices-dark.png">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Resource>
+    <Resource Include="Resources\employees-dark.png" />
+    <Resource Include="Resources\next-dark.png" />
     <Resource Include="Resources\password-dark.png">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Resource>
+    <Resource Include="Resources\prev-dark.png" />
+    <Resource Include="Resources\records-dark.png" />
     <Resource Include="Resources\search-dark.png">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Resource>

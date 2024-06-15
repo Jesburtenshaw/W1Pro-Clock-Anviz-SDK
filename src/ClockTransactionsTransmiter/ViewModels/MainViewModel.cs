@@ -1,11 +1,11 @@
 ﻿using ClockTransactionsTransmiter.Devices;
 using ClockTransactionsTransmiter.Helper;
 using CsvHelper;
+using PQWorld.BLL.Implement.SqlSugar;
+using SqlSugar.Extensions;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -20,13 +20,14 @@ namespace ClockTransactionsTransmiter.ViewModels
         public IntPtr anviz_handle = IntPtr.Zero;
         public CancellationTokenSource cts_get_results = null;
         private const int authenticationLength = 12;
+        private const int pageSize = 20;
         private const int bufferLength = 32000;
+        private bool employeesInited = false;
+        private bool recordsInited = false;
         private string settingsCsvPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Settings.csv");
         private string recordsCsvPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Records.csv");
         private string pendingRecordsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PendingRecords");
-        private string employeesCsvPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Employees.csv");
-        private List<EmployeeViewModel> employees = new List<EmployeeViewModel>();
-        private List<RecordViewModel> records = new List<RecordViewModel>();
+        private string employeesCsvPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Employees.csv");     
         private Queue<RecordViewModel> qRecords = new Queue<RecordViewModel>();
         private Queue<EmployeeViewModel> qEmployees = new Queue<EmployeeViewModel>();
         private Dictionary<int, int> dictDevTypeFlag = new Dictionary<int, int>();// 0x10:DR, 0x400:msg content 200 and unicode
@@ -70,6 +71,20 @@ namespace ClockTransactionsTransmiter.ViewModels
             {
                 ready = value;
                 OnPropertyChanged(nameof(Ready));
+            }
+        }
+
+        private string title;
+        public string Title
+        {
+            get
+            {
+                return title;
+            }
+            set
+            {
+                title = value;
+                OnPropertyChanged(nameof(Title));
             }
         }
 
@@ -143,6 +158,62 @@ namespace ClockTransactionsTransmiter.ViewModels
             }
         }
 
+        private bool hasPrev;
+        public bool HasPrev
+        {
+            get
+            {
+                return hasPrev;
+            }
+            set
+            {
+                hasPrev = value;
+                OnPropertyChanged(nameof(HasPrev));
+            }
+        }
+
+        private bool hasNext;
+        public bool HasNext
+        {
+            get
+            {
+                return hasNext;
+            }
+            set
+            {
+                hasNext = value;
+                OnPropertyChanged(nameof(HasNext));
+            }
+        }
+
+        private int maxPage = 1;
+        public int MaxPage
+        {
+            get
+            {
+                return maxPage;
+            }
+            set
+            {
+                maxPage = value;
+                OnPropertyChanged(nameof(MaxPage));
+            }
+        }
+
+        private int pageIndex = 1;
+        public int PageIndex
+        {
+            get
+            {
+                return pageIndex;
+            }
+            set
+            {
+                pageIndex = value;
+                OnPropertyChanged(nameof(PageIndex));
+            }
+        }
+
         private SettingsViewModel editingSettings;
         public SettingsViewModel EditingSettings
         {
@@ -171,6 +242,34 @@ namespace ClockTransactionsTransmiter.ViewModels
             }
         }
 
+        private EmployeeSearchViewModel curEmployeeSearch;
+        public EmployeeSearchViewModel CurEmployeeSearch
+        {
+            get
+            {
+                return curEmployeeSearch;
+            }
+            set
+            {
+                curEmployeeSearch = value;
+                OnPropertyChanged(nameof(CurEmployeeSearch));
+            }
+        }
+
+        private RecordSearchViewModel curRecordSearch;
+        public RecordSearchViewModel CurRecordSearch
+        {
+            get
+            {
+                return curRecordSearch;
+            }
+            set
+            {
+                curRecordSearch = value;
+                OnPropertyChanged(nameof(CurRecordSearch));
+            }
+        }
+
         private ObservableCollection<DeviceViewModel> devices;
         public ObservableCollection<DeviceViewModel> Devices
         {
@@ -185,8 +284,37 @@ namespace ClockTransactionsTransmiter.ViewModels
             }
         }
 
+        private ObservableCollection<EmployeeViewModel> employees;
+        public ObservableCollection<EmployeeViewModel> Employees
+        {
+            get
+            {
+                return employees;
+            }
+            set
+            {
+                employees = value;
+                OnPropertyChanged(nameof(Employees));
+            }
+        }
+
+        private ObservableCollection<RecordViewModel> records;
+        public ObservableCollection<RecordViewModel> Records
+        {
+            get
+            {
+                return records;
+            }
+            set
+            {
+                records = value;
+                OnPropertyChanged(nameof(Records));
+            }
+        }
+
         public RelayCommand ScanCommand { get; set; }
         public RelayCommand SwitchUICommand { get; set; }
+        public RelayCommand SwitchDataCommand { get; set; }
         public RelayCommand SaveSettingsCommand { get; set; }
         
         public IotHubPublisher IothubPublisher { get; set; }
@@ -195,11 +323,16 @@ namespace ClockTransactionsTransmiter.ViewModels
         {
             ScanCommand = new RelayCommand(Scan);
             SwitchUICommand = new RelayCommand(SwitchUI);
+            SwitchDataCommand = new RelayCommand(SwitchData);
             SaveSettingsCommand = new RelayCommand(SaveSettings);
             ShowMain = true;
             EditingSettings = new SettingsViewModel();
             CurSettings = new SettingsViewModel();
+            CurEmployeeSearch = new EmployeeSearchViewModel();
+            CurRecordSearch = new RecordSearchViewModel();
             Devices = new ObservableCollection<DeviceViewModel>();
+            Employees = new ObservableCollection<EmployeeViewModel>();
+            Records = new ObservableCollection<RecordViewModel>();
             IothubPublisher = new IotHubPublisher();
         }
 
@@ -310,10 +443,11 @@ namespace ClockTransactionsTransmiter.ViewModels
             });
         }
 
-        private void SwitchUI(object sender)
+        private async void SwitchUI(object sender)
         {
             //Status = "";
             var btnCode = sender.ToString();
+            Title = btnCode;
             if (btnCode == "Settings")
             {
                 ShowSettings = true;
@@ -334,6 +468,10 @@ namespace ClockTransactionsTransmiter.ViewModels
                 ShowEmployees = false;
                 ShowRecords = false;
                 ShowMain = false;
+                PageIndex = 1;
+                MaxPage = 1;
+                HasPrev = false;
+                HasNext = false;
             }
             else if (btnCode == "Employees")
             {
@@ -342,6 +480,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                 ShowEmployees = true;
                 ShowRecords = false;
                 ShowMain = false;
+                SwitchData("");
             }
             else if (btnCode == "Records")
             {
@@ -350,6 +489,7 @@ namespace ClockTransactionsTransmiter.ViewModels
                 ShowEmployees = false;
                 ShowRecords = true;
                 ShowMain = false;
+                SwitchData("");
             }
             else
             {
@@ -358,6 +498,83 @@ namespace ClockTransactionsTransmiter.ViewModels
                 ShowEmployees = false;
                 ShowRecords = false;
                 ShowMain = true;
+            }
+        }
+
+        private async void SwitchData(object sender)
+        {
+            if (!Ready)
+            {
+                return;
+            }
+            //Status = "";
+            var btnOp = sender.ToString();
+            if (Title == "Employees")
+            {
+                if (!employeesInited)
+                {
+                    employeesInited = true;
+                }
+                else
+                {
+                    if (btnOp == "+" && curEmployeeSearch.PageIndex < curEmployeeSearch.MaxPage)
+                    {
+                        curEmployeeSearch.PageIndex++;
+                    }
+                    else if (btnOp == "-" && curEmployeeSearch.PageIndex > 1)
+                    {
+                        curEmployeeSearch.PageIndex--;
+                    }
+                }
+                var employeeBody = (await EmployeeLogic.Instance.ListAsync(CurEmployeeSearch.PageIndex,
+                pageSize,
+                CurEmployeeSearch.MachineId,
+                CurEmployeeSearch.EmployeeId,
+                CurEmployeeSearch.EmployeeName)).Body;
+                CurEmployeeSearch.MaxPage = employeeBody.MaxPage;
+                Employees.Clear();
+                foreach (var employee in employeeBody.Items)
+                {
+                    Employees.Add(employee);
+                }
+                PageIndex = curEmployeeSearch.PageIndex;
+                MaxPage = curEmployeeSearch.MaxPage;
+                HasPrev = curEmployeeSearch.PageIndex > 1;
+                HasNext = curEmployeeSearch.PageIndex < curEmployeeSearch.MaxPage;
+            }
+            else if (Title == "Records")
+            {
+                if (!recordsInited)
+                {
+                    recordsInited = true;
+                }
+                else
+                {
+                    if (btnOp == "+" && curRecordSearch.PageIndex < curRecordSearch.MaxPage)
+                    {
+                        curRecordSearch.PageIndex++;
+                    }
+                    else if (btnOp == "-" && curRecordSearch.PageIndex > 1)
+                    {
+                        curRecordSearch.PageIndex--;
+                    }
+                }
+                var recordBody = (await RecordLogic.Instance.ListAsync(CurRecordSearch.PageIndex,
+                pageSize,
+                CurRecordSearch.MachineId,
+                CurRecordSearch.EmployeeId,
+                CurRecordSearch.StartTime,
+                CurRecordSearch.EndTime)).Body;
+                CurRecordSearch.MaxPage = recordBody.MaxPage;
+                Records.Clear();
+                foreach (var record in recordBody.Items)
+                {
+                    Records.Add(record);
+                }
+                PageIndex = curRecordSearch.PageIndex;
+                MaxPage = curRecordSearch.MaxPage;
+                HasPrev = curRecordSearch.PageIndex > 1;
+                HasNext = curRecordSearch.PageIndex < curRecordSearch.MaxPage;
             }
         }
 
@@ -625,6 +842,12 @@ namespace ClockTransactionsTransmiter.ViewModels
                             //    });
                             //    Status = $"Failed to connect to {BytesStringHelper.Encoding.GetString(dev_fail.Addr)}";
                             //});
+                            var ip_port_fail = BytesStringHelper.Encoding.GetString(dev_fail.Addr);
+                            var ip_fail = ip_port_fail.Substring(0, ip_port_fail.IndexOf(':'));
+                            if (!this.exit && CurSettings.CheckIp(ip_fail))
+                            {
+                                AnvizNew.CCHex_ClientConnect(anviz_handle, BytesStringHelper.Encoding.GetBytes(ip_fail), (int)CurSettings.ServicePort);
+                            }
                             break;
                         case (int)AnvizNew.MsgType.CCHEX_RET_DEV_LOGIN_TYPE:
                             AnvizNew.CCHEX_RET_DEV_LOGIN_STRU dev_add;
@@ -846,29 +1069,16 @@ namespace ClockTransactionsTransmiter.ViewModels
         }
 
         public async Task HandleEmployees()
-        {
-            if (!File.Exists(employeesCsvPath))
-            {
-                File.WriteAllText(employeesCsvPath, null);
-            }
-            using (var reader = new StreamReader(employeesCsvPath))
-            {
-                using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
-                {
-                    employees.AddRange(csv.GetRecords<EmployeeViewModel>());
-                }
-            }        
-
+        {     
             while (!cts_get_results.Token.IsCancellationRequested)
             {
                 var hasNew = false;
                 while (qEmployees.Count > 0)
                 {
                     var q = qEmployees.Dequeue();
-                    if (!employees.Exists(item => item.EmployeeId == q.EmployeeId))
+                    hasNew = (await EmployeeLogic.Instance.AddAsync(q)).Body;
+                    if (hasNew)
                     {
-                        employees.Add(q);
-                        hasNew = true;
                         Application.Current.Dispatcher.Invoke(() =>
                         {
                             Status = $"Last employee record: Clock ID: {q.MachineId} Employee ID: {q.EmployeeId} Employee Name: {q.EmployeeName}";
@@ -876,17 +1086,6 @@ namespace ClockTransactionsTransmiter.ViewModels
                     }
                 }
 
-                if (hasNew)
-                {
-                    // Write to a file.
-                    using (var writer = new StreamWriter(employeesCsvPath))
-                    {
-                        using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
-                        {
-                            csv.WriteRecords(employees);
-                        }
-                    }
-                }
                 if (qEmployees.Count == 0)
                 {
                     await Task.Delay(10);
@@ -907,36 +1106,18 @@ namespace ClockTransactionsTransmiter.ViewModels
 
         public async Task HandleRecords()
         {
-            if (!Directory.Exists(pendingRecordsPath))
-            {
-                Directory.CreateDirectory(pendingRecordsPath);
-            }
-            if (!File.Exists(recordsCsvPath))
-            {
-                File.WriteAllText(recordsCsvPath, null);
-            }
-            using (var reader = new StreamReader(recordsCsvPath))
-            {
-                using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
-                {
-                    records.AddRange(csv.GetRecords<RecordViewModel>());
-                }
-            }
-
             var newRecords = new List<RecordViewModel>();
             while (!cts_get_results.Token.IsCancellationRequested)
             {
                 var hasNew = false;
+                newRecords.Clear();
                 while (qRecords.Count > 0)
                 {
                     var q = qRecords.Dequeue();
-                    if (!records.Exists(item => item.MachineId == q.MachineId &&
-                        item.EmployeeId == q.EmployeeId &&
-                        item.Time == q.Time))
+                    hasNew = (await RecordLogic.Instance.AddAsync(q)).Body;
+                    if (hasNew)
                     {
                         newRecords.Add(q);
-                        records.Add(q);
-                        hasNew = true;
                         Application.Current.Dispatcher.Invoke(() =>
                         {
                             Status = $"Last transaction record: Clock ID: {q.MachineId} Employee ID: {q.EmployeeId} DateTime: {q.Time}";
@@ -955,15 +1136,6 @@ namespace ClockTransactionsTransmiter.ViewModels
                         catch
                         {
                             await File.AppendAllTextAsync(Path.Combine(pendingRecordsPath, $"{DateTime.Now.ToString("yyMMddHHmmssfff")}.json"), Newtonsoft.Json.JsonConvert.SerializeObject(record));
-                        }
-                    }
-
-                    // Write to a file.
-                    using (var writer = new StreamWriter(recordsCsvPath))
-                    {
-                        using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
-                        {
-                            csv.WriteRecords(records);
                         }
                     }
                 }

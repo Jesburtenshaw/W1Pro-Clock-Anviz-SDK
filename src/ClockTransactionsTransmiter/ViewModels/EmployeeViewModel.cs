@@ -1,4 +1,5 @@
 ﻿using ClockTransactionsTransmiter.ViewModels;
+using SqlSugar;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -7,9 +8,14 @@ using System.Threading.Tasks;
 
 namespace ClockTransactionsTransmiter.ViewModels
 {
+    [SugarTable("Employees")]
     public class EmployeeViewModel : BaseViewModel
     {
+        [SugarColumn(ColumnName = "Id", IsPrimaryKey = true)]
+        public int? Id { get; set; }
+
         private string machineId;
+        [SugarColumn(ColumnName = "MachineId")]
         public string MachineId
         {
             get
@@ -24,6 +30,7 @@ namespace ClockTransactionsTransmiter.ViewModels
         }
 
         private int index;
+        [SugarColumn(IsIgnore = true)]
         public int Index
         {
             get
@@ -38,6 +45,7 @@ namespace ClockTransactionsTransmiter.ViewModels
         }
 
         private string employeeId;
+        [SugarColumn(ColumnName = "EmployeeId")]
         public string EmployeeId
         {
             get
@@ -52,6 +60,7 @@ namespace ClockTransactionsTransmiter.ViewModels
         }
 
         private string employeeName;
+        [SugarColumn(ColumnName = "EmployeeName")]
         public string EmployeeName
         {
             get
