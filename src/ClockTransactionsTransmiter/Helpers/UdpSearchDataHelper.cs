@@ -10,7 +10,7 @@ using System.Collections.ObjectModel;
 using System.Security.Cryptography.Xml;
 using ClockTransactionsTransmiter.ViewModels;
 
-namespace ClockTransactionsTransmiter.Helper
+namespace ClockTransactionsTransmiter.Helpers
 {
     public static class UdpSearchDataHelper
     {

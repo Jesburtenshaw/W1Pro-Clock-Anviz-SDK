@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Input;
 
-namespace ClockTransactionsTransmiter.Helper
+namespace ClockTransactionsTransmiter.Helpers
 {
     public class RelayCommand : ICommand
     {
